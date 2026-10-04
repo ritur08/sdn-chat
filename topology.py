@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Mininet topology: 1 switch, 1 chat server host (h1), N client hosts."""
+"""Mininet topology: 1 switch, chat server host h1, N client hosts, and a
+NAT node (10.0.0.254) so the server can send events to the Ryu controller."""
 import os
 from mininet.net import Mininet
 from mininet.node import RemoteController, OVSKernelSwitch
@@ -19,6 +20,7 @@ def build(n_clients=2):
     for i in range(n_clients):
         client = net.addHost(f"h{i + 2}", ip=f"10.0.0.{i + 2}/24")
         net.addLink(client, s1)
+    net.addNAT(ip="10.0.0.254/24")
     return net
 
 
@@ -26,7 +28,8 @@ def main():
     setLogLevel("info")
     net = build(n_clients=2)
     net.start()
-    net.pingAll()
+    chat_hosts = [net.get(n) for n in ("h1", "h2", "h3")]
+    net.ping(chat_hosts)
     h1 = net.get("h1")
     h1.cmd(f"python3 {HERE}/server.py > /tmp/server.log 2>&1 &")
     print("\nChat server running on h1 (10.0.0.1:5000)")

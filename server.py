@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
-"""Multi-client TCP chat server (D1 base)."""
+"""Multi-client TCP chat server. Sends UDP events to the SDN controller."""
 import socket
 import threading
 
 HOST = "0.0.0.0"
 PORT = 5000
+CONTROLLER_ADDR = ("10.0.0.254", 9000)  # Ryu controller (via Mininet NAT)
 
 clients = {}    # username -> socket
 rooms = {}      # room name -> set of usernames
 user_room = {}  # username -> current room
 lock = threading.Lock()  # protects the three dicts above
 
+notify_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
 HELP = ("Commands: REGISTER <name> | JOIN <room> | MSG <text> | "
         "PM <user> <text> | USERS | LEAVE | QUIT")
+
+
+def notify(text):
+    """Tell the SDN controller about a chat event (fire and forget)."""
+    try:
+        notify_sock.sendto(text.encode(), CONTROLLER_ADDR)
+    except OSError:
+        pass
 
 
 def send(sock, text):
@@ -70,13 +81,14 @@ def handle_client(conn, addr):
                         name = arg
                         send(conn, f"OK registered as {name}")
                         print(f"[server] {name} registered from {addr[0]}")
+                        notify(f"REGISTER {name} {addr[0]}")
             elif cmd == "QUIT":
                 break
             elif name is None:
                 send(conn, "ERR register first: REGISTER <name>")
             elif cmd == "JOIN":
-                if not arg:
-                    send(conn, "ERR usage: JOIN <room>")
+                if not arg or " " in arg:
+                    send(conn, "ERR usage: JOIN <room> (no spaces)")
                 else:
                     leave_room(name)
                     with lock:
@@ -84,6 +96,7 @@ def handle_client(conn, addr):
                         user_room[name] = arg
                     send(conn, f"OK joined {arg}")
                     broadcast(arg, f"* {name} joined {arg}", exclude=name)
+                    notify(f"JOIN {name} {arg}")
             elif cmd == "LEAVE":
                 if leave_room(name):
                     send(conn, "OK left room")
@@ -122,6 +135,7 @@ def handle_client(conn, addr):
             with lock:
                 clients.pop(name, None)
             print(f"[server] {name} disconnected")
+            notify(f"DISCONNECT {name}")
         conn.close()
 
 
