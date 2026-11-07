@@ -2,6 +2,7 @@
 """Multi-client TCP chat server. Sends UDP events to the SDN controller."""
 import socket
 import threading
+import time
 
 HOST = "0.0.0.0"
 PORT = 5000
@@ -10,7 +11,9 @@ CONTROLLER_ADDR = ("10.0.0.254", 9000)  # Ryu controller (via Mininet NAT)
 clients = {}    # username -> socket
 rooms = {}      # room name -> set of usernames
 user_room = {}  # username -> current room
-lock = threading.Lock()  # protects the three dicts above
+lock = threading.Lock()  # protects the dicts above
+msg_counts = {}  # username -> commands received since the last report
+REPORT_INTERVAL = 1.0  # seconds between rate reports to the controller
 
 notify_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -31,6 +34,18 @@ def send(sock, text):
         sock.sendall((text + "\n").encode())
     except OSError:
         pass
+
+
+def report_rates():
+    """Every REPORT_INTERVAL seconds, tell the controller how many commands
+    each user sent (messages per second). The controller blocks flooders."""
+    while True:
+        time.sleep(REPORT_INTERVAL)
+        with lock:
+            counts = dict(msg_counts)
+            msg_counts.clear()
+        for user, n in counts.items():
+            notify(f"RATE {user} {n / REPORT_INTERVAL:.1f}")
 
 
 def broadcast(room, text, exclude=None):
@@ -64,6 +79,9 @@ def handle_client(conn, addr):
             parts = line.split(" ", 1)
             cmd = parts[0].upper()
             arg = parts[1].strip() if len(parts) > 1 else ""
+            if name:
+                with lock:
+                    msg_counts[name] = msg_counts.get(name, 0) + 1
 
             if cmd == "REGISTER":
                 if name:
@@ -144,6 +162,7 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((HOST, PORT))
     srv.listen(50)
+    threading.Thread(target=report_rates, daemon=True).start()
     print(f"[server] listening on {HOST}:{PORT}")
     try:
         while True:

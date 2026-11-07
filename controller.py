@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Ryu controller: learning switch + chat traffic classification +
-reaction to chat events sent by the chat server over UDP (D1)."""
+reaction to chat events sent by the chat server over UDP.
+D2 step 1: per-user traffic monitoring using OpenFlow flow statistics."""
+import os
 import socket
+import time
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -10,12 +13,18 @@ from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, tcp, ether_types
 
+# ---------- configuration (tune values here) ----------
 CHAT_PORT = 5000
-EVENT_PORT = 9000   # the chat server sends UDP events here
+EVENT_PORT = 9000      # the chat server sends UDP events here
+STATS_INTERVAL = 3     # seconds between flow-statistics polls
+FLOOD_MSGS = int(os.environ.get("FLOOD_MSGS", 20))         # chat msgs/sec (reported by the server) that counts as flooding
+BLOCK_SECONDS = 30     # how long a flooding user stays blocked
+
 PRIO_MISS = 0
 PRIO_FWD = 10
 PRIO_CHAT = 100
 PRIO_USER = 150
+PRIO_BLOCK = 200       # drop rule, beats every other rule
 
 
 class ChatController(app_manager.RyuApp):
@@ -29,7 +38,11 @@ class ChatController(app_manager.RyuApp):
         self.users = {}       # username -> ip
         self.rooms = {}       # room -> set of usernames
         self.user_room = {}   # username -> room
+        self.prev_stats = {}  # ip -> (packets, bytes, timestamp)
+        self.user_rates = {}  # ip -> (packets/sec, bytes/sec)
+        self.blocked = {}     # ip -> time when its block expires
         hub.spawn(self.listen_for_events)
+        hub.spawn(self.monitor_loop)
 
     # ---------- events from the chat server ----------
     def listen_for_events(self):
@@ -70,7 +83,16 @@ class ChatController(app_manager.RyuApp):
                 self.rooms[room].discard(name)
             if ip and ip not in self.users.values():
                 self.remove_user_flow(ip)
+                self.prev_stats.pop(ip, None)
+                self.user_rates.pop(ip, None)
             self.logger.info("EVENT disconnect: %s (rule removed)", name)
+        elif kind == "RATE":
+            name, rate = parts[1], float(parts[2])
+            ip = self.users.get(name)
+            if rate >= 5:
+                self.logger.info("RATE %s: %.1f msg/s", name, rate)
+            if ip and rate > FLOOD_MSGS and ip not in self.blocked:
+                self.block_user(ip, rate)
         else:
             self.logger.warning("unknown event: %s", line)
 
@@ -96,6 +118,72 @@ class ChatController(app_manager.RyuApp):
             priority=PRIO_USER, match=self.user_match(ip),
             out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY))
 
+    # ---------- monitoring (D2 step 1) ----------
+    def monitor_loop(self):
+        """Every STATS_INTERVAL seconds, ask the switch for its flow stats."""
+        while True:
+            hub.sleep(STATS_INTERVAL)
+            self.check_unblock()
+            if self.dp is not None:
+                parser = self.dp.ofproto_parser
+                self.dp.send_msg(parser.OFPFlowStatsRequest(self.dp))
+
+    def block_user(self, ip, rate):
+        """Install a high-priority drop rule for a flooding user."""
+        if self.dp is None:
+            return
+        self.add_flow(self.dp, PRIO_BLOCK, self.user_match(ip), [],
+                      hard=BLOCK_SECONDS)
+        self.blocked[ip] = time.time() + BLOCK_SECONDS
+        self.logger.warning(
+            "FLOOD DETECTED: %s (%s) sent %.1f msg/s (limit %d) -> "
+            "BLOCKED for %d s (priority %d drop rule)",
+            self.name_for_ip(ip), ip, rate, FLOOD_MSGS,
+            BLOCK_SECONDS, PRIO_BLOCK)
+
+    def check_unblock(self):
+        """The switch removes the drop rule by itself; log when it expires."""
+        now = time.time()
+        for ip, until in list(self.blocked.items()):
+            if now >= until:
+                del self.blocked[ip]
+                self.prev_stats.pop(ip, None)
+                self.logger.info("UNBLOCKED: %s (%s) - block expired, "
+                                 "access restored", self.name_for_ip(ip), ip)
+
+    def name_for_ip(self, ip):
+        for name, user_ip in self.users.items():
+            if user_ip == ip:
+                return name
+        return "?"
+
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    def on_flow_stats(self, ev):
+        """Turn the switch's per-rule counters into per-user rates."""
+        now = time.time()
+        for stat in ev.msg.body:
+            if stat.priority != PRIO_USER:
+                continue
+            ip = stat.match.get("ipv4_src")
+            if ip is None:
+                continue
+            pkts, byts = stat.packet_count, stat.byte_count
+            prev = self.prev_stats.get(ip)
+            self.prev_stats[ip] = (pkts, byts, now)
+            if prev is None or pkts < prev[0]:
+                continue   # first sample, or the rule was re-installed
+            dt = now - prev[2]
+            if dt <= 0:
+                continue
+            pps = (pkts - prev[0]) / dt
+            bps = (byts - prev[1]) / dt
+            self.user_rates[ip] = (pps, bps)
+            if pkts > prev[0]:   # only log users that were active
+                self.logger.info(
+                    "STATS %s (%s): %.1f pkt/s, %.0f B/s "
+                    "(total %d pkts, %d bytes)",
+                    self.name_for_ip(ip), ip, pps, bps, pkts, byts)
+
     # ---------- switch handling ----------
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def on_switch_features(self, ev):
@@ -108,13 +196,14 @@ class ChatController(app_manager.RyuApp):
         self.logger.info("switch %s connected, table-miss rule installed",
                          dp.id)
 
-    def add_flow(self, dp, priority, match, actions, idle=0):
+    def add_flow(self, dp, priority, match, actions, idle=0, hard=0):
         ofp, parser = dp.ofproto, dp.ofproto_parser
         inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                              actions)]
         dp.send_msg(parser.OFPFlowMod(datapath=dp, priority=priority,
                                       match=match, instructions=inst,
-                                      idle_timeout=idle))
+                                      idle_timeout=idle,
+                                      hard_timeout=hard))
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def on_packet_in(self, ev):
