@@ -1,0 +1,16 @@
+label,bw_mbps,size_kb,role,user,sent,received,loss_pct,avg_ms,p95_ms,max_ms,delivered_kbps
+baseline,2,20,vip_probe,vipprobe,15,15,0.0,24676.7,39834.3,39834.3,
+baseline,2,20,normal_probe,normprobe,15,15,0.0,24872.7,40453.6,40453.6,
+baseline,2,20,heavy_normal,heavyA,,,,,,,620
+baseline,2,20,heavy_normal,heavyB,,,,,,,600
+baseline,2,20,heavy_normal,heavyC,,,,,,,613
+qos,2,20,vip_probe,vipprobe,20,20,0.0,5572.5,6532.3,6532.3,
+qos,2,20,normal_probe,normprobe,20,20,0.0,5230.2,6506.6,6506.6,
+qos,2,20,heavy_normal,heavyA,,,,,,,604
+qos,2,20,heavy_normal,heavyB,,,,,,,583
+qos,2,20,heavy_normal,heavyC,,,,,,,610
+qos,2,20,vip_probe,vipprobe,20,20,0.0,411.6,583.6,583.6,
+qos,2,20,normal_probe,normprobe,20,20,0.0,386.5,618.3,618.3,
+qos,2,20,heavy_normal,heavyA,,,,,,,439
+qos,2,20,heavy_normal,heavyB,,,,,,,444
+qos,2,20,heavy_normal,heavyC,,,,,,,436
