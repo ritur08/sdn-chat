@@ -30,7 +30,7 @@ A concurrent, multi-user TCP chat application running on a virtual Software-Defi
 |---|---|---|
 | Person 1 | Ritu Reddy | Controller monitoring, flood detection and blocking, `flooder.py`, `probe.py`, blocking on/off experiment, scaling experiment (`scaling_test.py`, `plot_scaling.py`), integration and repo |
 | Person 2 | Pratham | QoS controller (`controller_qos.py`: per-user meters, VIP rooms), 3-switch topology (`topology_big.py`), VIP experiment |
-| Person 3 | Prerana | Independent scaling measurement, baseline vs SDN (`run_scaling.py`, `load_clients.py`, `plot_results.py`, `DEMO.md`) |
+| Person 3 | Prerana | Independent scaling measurement, baseline vs SDN (`run_scaling.py`, `load_clients.py`, `plot_results.py`, `SCALING_PERSON3.md`) |
 
 Git workflow: each person worked on their own branch (`d2`, `person2-work`, `person3-work`); the branches were merged on `integration` and then into `main`.
 
@@ -103,9 +103,10 @@ The controller runs on the VM, outside Mininet. The NAT node (`nat0`, 10.0.0.254
 | `plot_scaling.py` | Reads `results.csv`, prints a summary table and saves `scaling.png`. |
 | `results.csv`, `scaling.png` | Person 1 scaling results (baseline vs SDN). |
 | `config.py`, `load_clients.py`, `run_scaling.py`, `plot_results.py` | Person 3 scaling test (runs its own Mininet topology). |
-| `results_raw.csv`, `results_table.md`, `results.png`, `DEMO.md` | Person 3 results and write-up. |
+| `results_raw.csv`, `results_table.md`, `results.png`, `SCALING_PERSON3.md` | Person 3 results and write-up. |
 | `topology_big.py` | Person 2: 3-switch tree (core s1, edge s2 and s3), server on h1, six clients, optional bandwidth limit on the server link. |
 | `bulk.py`, `vip_probe.py`, `vip_experiment.py` | Person 2: VIP experiment (heavy senders, probes, runner). |
+| `DEMO.md` | Step-by-step script for the live D2 demo. |
 | `vip_results.csv`, `vip_experiment_results.png`, `README_person2.md` | Person 2 results and notes. |
 
 ---
