@@ -39,3 +39,5 @@ similar delay, because the delay came from the heavy users, and the meters fix
 that for everyone. The meters attach to flows created when chat traffic reaches
 the controller, so learned L2 flows can hide the traffic from it. The
 experiment clears them before it starts.
+
+![Baseline vs QoS: chat delay and heavy-user throughput](vip_experiment_results.png)
